@@ -1592,6 +1592,7 @@ fn map_rest_account_error(error: RestError) -> Status {
         {
             Status::new(Code::Unauthenticated, message)
         }
+        RestError::TimeoutError(_elapsed) => Status::deadline_exceeded("REST request timeout"),
         _ => Status::internal("internal error"),
     }
 }
