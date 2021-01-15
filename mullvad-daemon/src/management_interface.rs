@@ -67,7 +67,7 @@ impl ManagementService for ManagementServiceImpl {
 
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::SetTargetState(tx, TargetState::Secured))?;
-        let connect_issued = rx.await.map_err(|_| Status::internal("internal error"))?;
+        let connect_issued = self.wait_for_result(rx).await?;
         Ok(Response::new(connect_issued))
     }
 
@@ -76,7 +76,7 @@ impl ManagementService for ManagementServiceImpl {
 
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::SetTargetState(tx, TargetState::Unsecured))?;
-        let disconnect_issued = rx.await.map_err(|_| Status::internal("internal error"))?;
+        let disconnect_issued = self.wait_for_result(rx).await?;
         Ok(Response::new(disconnect_issued))
     }
 
@@ -84,7 +84,7 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("reconnect_tunnel");
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::Reconnect(tx))?;
-        let reconnect_issued = rx.await.map_err(|_| Status::internal("internal error"))?;
+        let reconnect_issued = self.wait_for_result(rx).await?;
         Ok(Response::new(reconnect_issued))
     }
 
@@ -92,7 +92,7 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("get_tunnel_state");
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::GetState(tx))?;
-        let state = rx.await.map_err(|_| Status::internal("internal error"))?;
+        let state = self.wait_for_result(rx).await?;
         Ok(Response::new(convert_state(state)))
     }
 
@@ -126,13 +126,12 @@ impl ManagementService for ManagementServiceImpl {
             log::debug!("factory_reset");
             let (tx, rx) = oneshot::channel();
             self.send_command_to_daemon(DaemonCommand::FactoryReset(tx))?;
-            rx.await
-                .map(Response::new)
-                .map_err(|_| Status::internal("internal error"))
+            let _ = self.wait_for_result(rx).await?;
+            Ok(Response::new(()))
         }
         #[cfg(target_os = "android")]
         {
-            Response::new(())
+            Ok(Response::new(()))
         }
     }
 
@@ -140,9 +139,8 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("get_current_version");
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::GetCurrentVersion(tx))?;
-        rx.await
-            .map(Response::new)
-            .map_err(|_| Status::internal("internal error"))
+        let version = self.wait_for_result(rx).await?;
+        Ok(Response::new(version))
     }
 
     async fn get_version_info(&self, _: Request<()>) -> ServiceResult<types::AppVersionInfo> {
@@ -150,8 +148,8 @@ impl ManagementService for ManagementServiceImpl {
 
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::GetVersionInfo(tx))?;
-        let version_info = rx.await.map_err(|_| Status::internal("internal error"))?;
-        version_info
+        self.wait_for_result(rx)
+            .await?
             .ok_or(Status::not_found("no version cache"))
             .map(|version_info| convert_version_info(&version_info))
             .map(Response::new)
@@ -176,9 +174,7 @@ impl ManagementService for ManagementServiceImpl {
 
         let message = DaemonCommand::UpdateRelaySettings(tx, constraints_update);
         self.send_command_to_daemon(message)?;
-        rx.await
-            .map(Response::new)
-            .map_err(|_| Status::internal("internal error"))
+        self.wait_for_result(rx).await.map(Response::new)
     }
 
     async fn get_relay_locations(
@@ -189,7 +185,7 @@ impl ManagementService for ManagementServiceImpl {
 
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::GetRelayLocations(tx))?;
-        let locations = rx.await.map_err(|_| Status::internal("internal error"))?;
+        let locations = self.wait_for_result(rx).await?;
 
         let (mut stream_tx, stream_rx) =
             tokio::sync::mpsc::channel(cmp::max(1, locations.countries.len()));
@@ -215,7 +211,7 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("get_current_location");
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::GetCurrentLocation(tx))?;
-        let result = rx.await.map_err(|_| Status::internal("internal error"))?;
+        let result = self.wait_for_result(rx).await?;
         match result {
             Some(geoip) => Ok(Response::new(convert_geoip_location(geoip))),
             None => Err(Status::not_found("no location was found")),
@@ -295,7 +291,7 @@ impl ManagementService for ManagementServiceImpl {
 
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::SetBridgeSettings(tx, settings))?;
-        let settings_result = rx.await.map_err(|_| Status::internal("internal error"))?;
+        let settings_result = self.wait_for_result(rx).await?;
         settings_result
             .map(Response::new)
             .map_err(|_| Status::internal("internal error"))
@@ -314,7 +310,7 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("set_bridge_state({:?})", bridge_state);
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::SetBridgeState(tx, bridge_state))?;
-        let settings_result = rx.await.map_err(|_| Status::internal("internal error"))?;
+        let settings_result = self.wait_for_result(rx).await?;
         settings_result
             .map(Response::new)
             .map_err(|_| Status::internal("internal error"))
@@ -327,9 +323,9 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("get_settings");
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::GetSettings(tx))?;
-        rx.await
+        self.wait_for_result(rx)
+            .await
             .map(|settings| Response::new(convert_settings(&settings)))
-            .map_err(|_| Status::internal("internal error"))
     }
 
     async fn set_allow_lan(&self, request: Request<bool>) -> ServiceResult<()> {
@@ -337,9 +333,7 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("set_allow_lan({})", allow_lan);
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::SetAllowLan(tx, allow_lan))?;
-        rx.await
-            .map(Response::new)
-            .map_err(|_| Status::internal("internal error"))
+        self.wait_for_result(rx).await.map(Response::new)
     }
 
     async fn set_show_beta_releases(&self, request: Request<bool>) -> ServiceResult<()> {
@@ -347,9 +341,7 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("set_show_beta_releases({})", enabled);
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::SetShowBetaReleases(tx, enabled))?;
-        rx.await
-            .map(Response::new)
-            .map_err(|_| Status::internal("internal error"))
+        self.wait_for_result(rx).await.map(Response::new)
     }
 
     async fn set_block_when_disconnected(&self, request: Request<bool>) -> ServiceResult<()> {
@@ -360,9 +352,7 @@ impl ManagementService for ManagementServiceImpl {
             tx,
             block_when_disconnected,
         ))?;
-        rx.await
-            .map(Response::new)
-            .map_err(|_| Status::internal("internal error"))
+        self.wait_for_result(rx).await.map(Response::new)
     }
 
     async fn set_auto_connect(&self, request: Request<bool>) -> ServiceResult<()> {
@@ -370,9 +360,7 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("set_auto_connect({})", auto_connect);
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::SetAutoConnect(tx, auto_connect))?;
-        rx.await
-            .map(Response::new)
-            .map_err(|_| Status::internal("internal error"))
+        self.wait_for_result(rx).await.map(Response::new)
     }
 
     async fn set_openvpn_mssfix(&self, request: Request<u32>) -> ServiceResult<()> {
@@ -385,9 +373,7 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("set_openvpn_mssfix({:?})", mssfix);
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::SetOpenVpnMssfix(tx, mssfix))?;
-        rx.await
-            .map(Response::new)
-            .map_err(|_| Status::internal("internal error"))
+        self.wait_for_result(rx).await.map(Response::new)
     }
 
     async fn set_wireguard_mtu(&self, request: Request<u32>) -> ServiceResult<()> {
@@ -396,9 +382,7 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("set_wireguard_mtu({:?})", mtu);
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::SetWireguardMtu(tx, mtu))?;
-        rx.await
-            .map(Response::new)
-            .map_err(|_| Status::internal("internal error"))
+        self.wait_for_result(rx).await.map(Response::new)
     }
 
     async fn set_enable_ipv6(&self, request: Request<bool>) -> ServiceResult<()> {
@@ -406,9 +390,7 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("set_enable_ipv6({})", enable_ipv6);
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::SetEnableIpv6(tx, enable_ipv6))?;
-        rx.await
-            .map(Response::new)
-            .map_err(|_| Status::internal("internal error"))
+        self.wait_for_result(rx).await.map(Response::new)
     }
 
     #[cfg(not(target_os = "android"))]
@@ -438,9 +420,7 @@ impl ManagementService for ManagementServiceImpl {
                 addresses: servers_ip,
             },
         ))?;
-        rx.await
-            .map(Response::new)
-            .map_err(|_| Status::internal("internal error"))
+        self.wait_for_result(rx).await.map(Response::new)
     }
     #[cfg(target_os = "android")]
     async fn set_dns_options(&self, _: Request<types::DnsOptions>) -> ServiceResult<()> {
@@ -453,7 +433,7 @@ impl ManagementService for ManagementServiceImpl {
     async fn create_new_account(&self, _: Request<()>) -> ServiceResult<String> {
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::CreateNewAccount(tx))?;
-        let result = rx.await.map_err(|_| Status::internal("internal error"))?;
+        let result = self.wait_for_result(rx).await?;
         match result {
             Ok(account_token) => Ok(Response::new(account_token)),
             Err(_) => Err(Status::internal("internal error")),
@@ -470,9 +450,7 @@ impl ManagementService for ManagementServiceImpl {
         };
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::SetAccount(tx, account_token))?;
-        rx.await
-            .map(Response::new)
-            .map_err(|_| Status::internal("internal error"))
+        self.wait_for_result(rx).await.map(Response::new)
     }
 
     async fn get_account_data(
@@ -483,7 +461,7 @@ impl ManagementService for ManagementServiceImpl {
         let account_token = request.into_inner();
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::GetAccountData(tx, account_token))?;
-        let result = rx.await.map_err(|_| Status::internal("internal error"))?;
+        let result = self.wait_for_result(rx).await?;
         result
             .map(|account_data| {
                 Response::new(types::AccountData {
@@ -507,8 +485,8 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("get_account_history");
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::GetAccountHistory(tx))?;
-        rx.await
-            .map_err(|_| Status::internal("internal error"))
+        self.wait_for_result(rx)
+            .await
             .map(|history| Response::new(types::AccountHistory { token: history }))
     }
 
@@ -520,25 +498,21 @@ impl ManagementService for ManagementServiceImpl {
         let account_token = request.into_inner();
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::RemoveAccountFromHistory(tx, account_token))?;
-        rx.await
-            .map(Response::new)
-            .map_err(|_| Status::internal("internal error"))
+        self.wait_for_result(rx).await.map(Response::new)
     }
 
     async fn clear_account_history(&self, _: Request<()>) -> ServiceResult<()> {
         log::debug!("clear_account_history");
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::ClearAccountHistory(tx))?;
-        rx.await
-            .map(Response::new)
-            .map_err(|_| Status::internal("internal error"))
+        self.wait_for_result(rx).await.map(Response::new)
     }
 
     async fn get_www_auth_token(&self, _: Request<()>) -> ServiceResult<String> {
         log::debug!("get_www_auth_token");
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::GetWwwAuthToken(tx))?;
-        let result = rx.await.map_err(|_| Status::internal("internal error"))?;
+        let result = self.wait_for_result(rx).await?;
         result
             .map(Response::new)
             .map_err(|error: mullvad_rpc::rest::Error| {
@@ -558,7 +532,7 @@ impl ManagementService for ManagementServiceImpl {
         let voucher = request.into_inner();
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::SubmitVoucher(tx, voucher))?;
-        let result = rx.await.map_err(|_| Status::internal("internal error"))?;
+        let result = self.wait_for_result(rx).await?;
         result
             .map(|submission| {
                 Response::new(types::VoucherSubmission {
@@ -597,18 +571,14 @@ impl ManagementService for ManagementServiceImpl {
             tx,
             Some(interval),
         ))?;
-        rx.await
-            .map_err(|_| Status::internal("internal error"))
-            .map(Response::new)
+        self.wait_for_result(rx).await.map(Response::new)
     }
 
     async fn reset_wireguard_rotation_interval(&self, _: Request<()>) -> ServiceResult<()> {
         log::debug!("reset_wireguard_rotation_interval");
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::SetWireguardRotationInterval(tx, None))?;
-        rx.await
-            .map_err(|_| Status::internal("internal error"))
-            .map(Response::new)
+        self.wait_for_result(rx).await.map(Response::new)
     }
 
     async fn generate_wireguard_key(&self, _: Request<()>) -> ServiceResult<types::KeygenEvent> {
@@ -617,8 +587,8 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("generate_wireguard_key");
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::GenerateWireguardKey(tx))?;
-        rx.await
-            .map_err(|_| Status::internal("internal error"))
+        self.wait_for_result(rx)
+            .await
             .map(|event| Response::new(convert_wireguard_key_event(&event)))
     }
 
@@ -626,11 +596,10 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("get_wireguard_key");
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::GetWireguardKey(tx))?;
-        let response = rx.await.map_err(|_| Status::internal("internal error"));
-        match response {
-            Ok(Some(key)) => Ok(Response::new(convert_public_key(&key))),
-            Ok(None) => Err(Status::not_found("no WireGuard key was found")),
-            Err(e) => Err(e),
+        let key = self.wait_for_result(rx).await?;
+        match key {
+            Some(key) => Ok(Response::new(convert_public_key(&key))),
+            None => Err(Status::not_found("no WireGuard key was found")),
         }
     }
 
@@ -638,9 +607,7 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("verify_wireguard_key");
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::VerifyWireguardKey(tx))?;
-        rx.await
-            .map_err(|_| Status::internal("internal error"))
-            .map(Response::new)
+        self.wait_for_result(rx).await.map(Response::new)
     }
 
     // Split tunneling
@@ -655,7 +622,7 @@ impl ManagementService for ManagementServiceImpl {
             log::debug!("get_split_tunnel_processes");
             let (tx, rx) = oneshot::channel();
             self.send_command_to_daemon(DaemonCommand::GetSplitTunnelProcesses(tx))?;
-            let pids = rx.await.map_err(|_| Status::internal("internal error"))?;
+            let pids = self.wait_for_result(rx).await?;
 
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
             tokio::spawn(async move {
@@ -679,9 +646,7 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("add_split_tunnel_process");
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::AddSplitTunnelProcess(tx, pid))?;
-        rx.await
-            .map_err(|_| Status::internal("internal error"))
-            .map(Response::new)
+        self.wait_for_result(rx).await.map(Response::new)
     }
     #[cfg(not(target_os = "linux"))]
     async fn add_split_tunnel_process(&self, _: Request<i32>) -> ServiceResult<()> {
@@ -694,9 +659,7 @@ impl ManagementService for ManagementServiceImpl {
         log::debug!("remove_split_tunnel_process");
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::RemoveSplitTunnelProcess(tx, pid))?;
-        rx.await
-            .map_err(|_| Status::internal("internal error"))
-            .map(Response::new)
+        self.wait_for_result(rx).await.map(Response::new)
     }
     #[cfg(not(target_os = "linux"))]
     async fn remove_split_tunnel_process(&self, _: Request<i32>) -> ServiceResult<()> {
@@ -709,9 +672,7 @@ impl ManagementService for ManagementServiceImpl {
             log::debug!("clear_split_tunnel_processes");
             let (tx, rx) = oneshot::channel();
             self.send_command_to_daemon(DaemonCommand::ClearSplitTunnelProcesses(tx))?;
-            rx.await
-                .map_err(|_| Status::internal("internal error"))
-                .map(Response::new)
+            self.wait_for_result(rx).await.map(Response::new)
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -726,6 +687,11 @@ impl ManagementServiceImpl {
         self.daemon_tx
             .send(command)
             .map_err(|_| Status::internal("internal error"))
+    }
+
+    async fn wait_for_result<T>(&self, rx: oneshot::Receiver<T>) -> Result<T, Status> {
+        rx.await
+            .map_err(|_| Status::internal("the channel was dropped by the daemon"))
     }
 }
 
