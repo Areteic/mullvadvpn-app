@@ -93,6 +93,7 @@ impl Account {
                 .get_account_data(settings.account_token)
                 .await?
                 .into_inner();
+            // TODO: Error conversions
             println!(
                 "Expires at     : {}",
                 Self::format_expiry(&expiry.expiry.unwrap())
@@ -106,6 +107,7 @@ impl Account {
     async fn create(&self) -> Result<()> {
         let mut rpc = new_rpc_client().await?;
         rpc.create_new_account(()).await?;
+        // TODO: Error conversions
         println!("New account created!");
         self.get().await
     }
