@@ -540,7 +540,7 @@ impl ManagementService for ManagementServiceImpl {
                     }),
                 })
             })
-            .map_err(map_rest_error)
+            .map_err(map_rest_voucher_error)
     }
 
     // WireGuard key management
@@ -1568,8 +1568,8 @@ impl Drop for ManagementInterfaceEventBroadcaster {
     }
 }
 
-// Converts a REST API error into a tonic status.
-fn map_rest_error(error: RestError) -> Status {
+/// Converts a REST API voucher error into a tonic status.
+fn map_rest_voucher_error(error: RestError) -> Status {
     match error {
         RestError::ApiError(StatusCode::BAD_REQUEST, message) => match &message.as_str() {
             &mullvad_rpc::INVALID_VOUCHER => Status::new(Code::NotFound, INVALID_VOUCHER_MESSAGE),
@@ -1580,6 +1580,13 @@ fn map_rest_error(error: RestError) -> Status {
 
             error => Status::unknown(format!("Voucher error: {}", error)),
         },
+        error => map_rest_error(error),
+    }
+}
+
+/// Converts a REST API error into a tonic status.
+fn map_rest_error(error: RestError) -> Status {
+    match error {
         RestError::ApiError(status, message)
             if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN =>
         {
