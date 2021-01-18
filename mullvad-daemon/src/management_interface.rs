@@ -1,4 +1,4 @@
-use crate::{DaemonCommand, DaemonCommandSender, EventListener};
+use crate::{settings, DaemonCommand, DaemonCommandSender, EventListener};
 use futures::channel::oneshot;
 use mullvad_management_interface::{
     types::{self, daemon_event, management_service_server::ManagementService},
@@ -294,7 +294,7 @@ impl ManagementService for ManagementServiceImpl {
         let settings_result = self.wait_for_result(rx).await?;
         settings_result
             .map(Response::new)
-            .map_err(|_| Status::internal("internal error"))
+            .map_err(map_settings_error)
     }
 
     async fn set_bridge_state(&self, request: Request<types::BridgeState>) -> ServiceResult<()> {
@@ -313,7 +313,7 @@ impl ManagementService for ManagementServiceImpl {
         let settings_result = self.wait_for_result(rx).await?;
         settings_result
             .map(Response::new)
-            .map_err(|_| Status::internal("internal error"))
+            .map_err(map_settings_error)
     }
 
     // Settings
@@ -1587,5 +1587,15 @@ fn map_rest_error(error: RestError) -> Status {
         }
         RestError::TimeoutError(_elapsed) => Status::deadline_exceeded("REST request timeout"),
         error => Status::unknown(format!("REST error: {}", error)),
+    }
+}
+
+/// Converts an instance of [`mullvad_daemon::settings::Error`] into a tonic status.
+fn map_settings_error(error: settings::Error) -> Status {
+    match error {
+        settings::Error::DeleteError(..) | settings::Error::WriteError(..) => {
+            Status::new(Code::FailedPrecondition, error.display_chain())
+        }
+        settings::Error::SerializeError(..) => Status::new(Code::Internal, error.display_chain()),
     }
 }
