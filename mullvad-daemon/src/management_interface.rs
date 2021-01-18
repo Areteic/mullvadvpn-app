@@ -670,7 +670,7 @@ impl ManagementServiceImpl {
     fn send_command_to_daemon(&self, command: DaemonCommand) -> Result<(), Status> {
         self.daemon_tx
             .send(command)
-            .map_err(|_| Status::internal("internal error"))
+            .map_err(|_| Status::internal("the daemon channel receiver has been dropped"))
     }
 
     async fn wait_for_result<T>(&self, rx: oneshot::Receiver<T>) -> Result<T, Status> {
