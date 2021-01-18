@@ -433,11 +433,10 @@ impl ManagementService for ManagementServiceImpl {
     async fn create_new_account(&self, _: Request<()>) -> ServiceResult<String> {
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::CreateNewAccount(tx))?;
-        let result = self.wait_for_result(rx).await?;
-        match result {
-            Ok(account_token) => Ok(Response::new(account_token)),
-            Err(_) => Err(Status::internal("internal error")),
-        }
+        self.wait_for_result(rx)
+            .await?
+            .map(Response::new)
+            .map_err(map_rest_error)
     }
 
     async fn set_account(&self, request: Request<AccountToken>) -> ServiceResult<()> {
@@ -476,7 +475,7 @@ impl ManagementService for ManagementServiceImpl {
                     "Unable to get account data from API: {}",
                     error.display_chain()
                 );
-                map_rest_account_error(error)
+                map_rest_error(error)
             })
     }
 
@@ -513,15 +512,13 @@ impl ManagementService for ManagementServiceImpl {
         let (tx, rx) = oneshot::channel();
         self.send_command_to_daemon(DaemonCommand::GetWwwAuthToken(tx))?;
         let result = self.wait_for_result(rx).await?;
-        result
-            .map(Response::new)
-            .map_err(|error: mullvad_rpc::rest::Error| {
-                log::error!(
-                    "Unable to get account data from API: {}",
-                    error.display_chain()
-                );
-                map_rest_account_error(error)
-            })
+        result.map(Response::new).map_err(|error: RestError| {
+            log::error!(
+                "Unable to get account data from API: {}",
+                error.display_chain()
+            );
+            map_rest_error(error)
+        })
     }
 
     async fn submit_voucher(
@@ -543,20 +540,7 @@ impl ManagementService for ManagementServiceImpl {
                     }),
                 })
             })
-            .map_err(|e| match e {
-                RestError::ApiError(StatusCode::BAD_REQUEST, message) => match &message.as_str() {
-                    &mullvad_rpc::INVALID_VOUCHER => {
-                        Status::new(Code::NotFound, INVALID_VOUCHER_MESSAGE)
-                    }
-
-                    &mullvad_rpc::VOUCHER_USED => {
-                        Status::new(Code::ResourceExhausted, USED_VOUCHER_MESSAGE)
-                    }
-
-                    _ => Status::internal("internal error"),
-                },
-                _ => Status::internal("internal error"),
-            })
+            .map_err(map_rest_error)
     }
 
     // WireGuard key management
@@ -1584,15 +1568,24 @@ impl Drop for ManagementInterfaceEventBroadcaster {
     }
 }
 
-// Converts a REST API error for an account into a tonic status.
-fn map_rest_account_error(error: RestError) -> Status {
+// Converts a REST API error into a tonic status.
+fn map_rest_error(error: RestError) -> Status {
     match error {
+        RestError::ApiError(StatusCode::BAD_REQUEST, message) => match &message.as_str() {
+            &mullvad_rpc::INVALID_VOUCHER => Status::new(Code::NotFound, INVALID_VOUCHER_MESSAGE),
+
+            &mullvad_rpc::VOUCHER_USED => {
+                Status::new(Code::ResourceExhausted, USED_VOUCHER_MESSAGE)
+            }
+
+            error => Status::unknown(format!("Voucher error: {}", error)),
+        },
         RestError::ApiError(status, message)
             if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN =>
         {
             Status::new(Code::Unauthenticated, message)
         }
         RestError::TimeoutError(_elapsed) => Status::deadline_exceeded("REST request timeout"),
-        _ => Status::internal("internal error"),
+        error => Status::unknown(format!("REST error: {}", error)),
     }
 }
