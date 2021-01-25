@@ -151,12 +151,6 @@ pub enum Error {
     OpenCachedTargetState(#[error(source)] io::Error),
 }
 
-/// Enum representing an error that occurred when calling [`DaemonCommand::CreateNewAccount`].
-pub enum CreateAccountError {
-    RpcError(mullvad_rpc::rest::Error),
-    SettingsError(settings::Error),
-}
-
 /// Enum representing commands that can be sent to the daemon.
 pub enum DaemonCommand {
     /// Set target state. Does nothing if the daemon already has the state that is being set.
